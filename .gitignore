@@ -1,0 +1,7 @@
+.env
+__pycache__/
+.pytest_cache/
+.venv/
+data/outbox.jsonl
+data/todos.jsonl
+.DS_Store
