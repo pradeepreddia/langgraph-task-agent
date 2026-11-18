@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>LangGraph Task Agent</title>
+<style>
+  :root { --bg:#f6f7fb; --card:#fff; --ink:#1d2333; --muted:#6b7285; --line:#d5d9e3;
+          --blue:#3b5bdb; --green:#2f9e44; --amber:#e8890c; --red:#e03131; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: system-ui, sans-serif; background:var(--bg); color:var(--ink); }
+  main { max-width: 1100px; margin: 28px auto; padding: 0 16px; }
+  h1 { margin: 0 0 4px; font-size: 26px; }
+  .sub { color: var(--muted); margin: 0 0 16px; }
+  .card { background: var(--card); border-radius: 12px; padding: 16px 18px; box-shadow: 0 1px 3px #0001; }
+  form { display:flex; gap:8px; margin-bottom: 14px; }
+  input { flex:1; padding:10px; border:1px solid var(--line); border-radius:8px; font-size:14px; }
+  button { background:var(--blue); color:#fff; border:0; border-radius:8px; padding:10px 16px; cursor:pointer; font-size:14px; }
+  button.ghost { background:#eef1fb; color:var(--blue); }
+  button.ok { background: var(--green); } button.no { background: var(--red); }
+  .examples { display:flex; gap:6px; flex-wrap:wrap; margin: -6px 0 14px; }
+  .examples button { padding: 5px 10px; font-size: 12px; }
+  .grid { display:grid; grid-template-columns: 1.45fr 1fr; gap: 14px; }
+  svg text { font: 13px system-ui, sans-serif; }
+  .node rect { fill:#fff; stroke:var(--line); stroke-width:1.5; transition: all .25s; }
+  .node text { fill: var(--ink); }
+  .node.active rect { fill:#e7edff; stroke:var(--blue); stroke-width:2.5; }
+  .node.done rect { fill:#ebfbee; stroke:var(--green); }
+  .node.wait rect { fill:#fff4e6; stroke:var(--amber); stroke-width:2.5; }
+  .node.denied rect { fill:#fff5f5; stroke:var(--red); }
+  .node.tool rect { rx: 18; }
+  .node.planned rect { stroke-dasharray: 4 3; stroke: var(--blue); }
+  .edge { stroke: var(--line); stroke-width: 1.5; fill: none; transition: stroke .25s; }
+  .edge.hot { stroke: var(--blue); stroke-width: 2.5; }
+  .label { fill: var(--muted); font-size: 11px; }
+  .log { max-height: 460px; overflow:auto; font-size: 13px; }
+  .ev { border-left: 3px solid var(--line); padding: 4px 0 4px 10px; margin: 0 0 8px; }
+  .ev b { display:block; } .ev small { color: var(--muted); white-space: pre-wrap; word-break: break-word; }
+  .ev.plan { border-color: var(--blue); } .ev.execute { border-color: var(--green); }
+  .ev.approval { border-color: var(--amber); } .ev.summarize { border-color: #7048e8; }
+  .ev.denied { border-color: var(--red); }
+  .approve { display:none; margin-top: 12px; background:#fff4e6; border:1px solid #ffd8a8; border-radius:10px; padding:12px; }
+  .approve pre { white-space: pre-wrap; font-size: 12px; background:#fff; padding:8px; border-radius:6px; margin:8px 0; }
+  .summary { margin-top: 14px; display:none; }
+  .legend { display:flex; gap:14px; font-size:12px; color:var(--muted); margin-top:8px; flex-wrap: wrap; }
+  .legend i { display:inline-block; width:12px; height:12px; border-radius:3px; margin-right:4px; vertical-align:-1px; border:1.5px solid; }
+</style>
+</head>
+<body>
+<main>
+  <h1>LangGraph Task Agent</h1>
+  <p class="sub">Watch the agent plan, call tools, and wait for your approval before side effects.</p>
+
+  <form id="f">
+    <input id="task" placeholder="Describe a task..." />
+    <button>Run</button>
+  </form>
+  <div class="examples">
+    <button class="ghost" data-t="Find my note about demo day and email alex@example.com about demo day">Note + email</button>
+    <button class="ghost" data-t="add todo: book the demo room">Add todo</button>
+    <button class="ghost" data-t="what is 25 * 8 for the team lunch">Calculator</button>
+    <button class="ghost" data-t="Find my note about cloud bill and what is 412 - 350">Note + math</button>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <svg id="g" viewBox="0 0 640 372" width="100%">
+        <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#adb5bd"/></marker></defs>
+        <g id="edges"></g><g id="nodes"></g>
+      </svg>
+      <div class="legend">
+        <span><i style="border-color:#3b5bdb;background:#e7edff"></i>running</span>
+        <span><i style="border-color:#2f9e44;background:#ebfbee"></i>done</span>
+        <span><i style="border-color:#e8890c;background:#fff4e6"></i>waiting for you</span>
+        <span><i style="border-color:#e03131;background:#fff5f5"></i>denied</span>
+        <span><i style="border-color:#3b5bdb;border-style:dashed"></i>in plan</span>
+      </div>
+      <div class="approve" id="approve">
+        <b id="aq"></b>
+        <pre id="aargs"></pre>
+        <button class="ok" id="yes">Approve</button>
+        <button class="no" id="no">Deny</button>
+      </div>
+    </div>
+    <div class="card">
+      <b>Event timeline</b>
+      <div class="log" id="log"><p class="sub" style="margin-top:8px">Run a task to see events.</p></div>
+      <div class="summary" id="summary"><b>Result</b><p id="sumtext" style="white-space:pre-wrap;font-size:13px"></p></div>
+    </div>
+  </div>
+</main>
+
+<script>
+const N = {  // x, y, w, label
+  start:{x:20,y:30,w:90,label:"START"}, plan:{x:165,y:30,w:110,label:"plan"},
+  summarize:{x:430,y:30,w:120,label:"summarize"}, end:{x:570,y:30,w:60,label:"END"},
+  execute:{x:220,y:190,w:110,label:"execute"}, approval:{x:20,y:190,w:130,label:"approval gate"},
+  calculator:{x:440,y:100,w:160,label:"calculator",tool:1}, search_notes:{x:440,y:150,w:160,label:"search_notes",tool:1},
+  draft_email:{x:440,y:200,w:160,label:"draft_email",tool:1}, send_email:{x:440,y:250,w:160,label:"send_email",tool:1},
+  add_todo:{x:440,y:300,w:160,label:"add_todo",tool:1},
+};
+const H = 40;
+const E = [["start","plan"],["plan","execute"],["execute","approval"],["approval","execute"],["plan","summarize"],
+  ["execute","summarize"],["summarize","end"],["execute","calculator"],["execute","search_notes"],
+  ["execute","draft_email"],["execute","send_email"],["execute","add_todo"]];
+const sens = {send_email:1, add_todo:1};
+const $ = (id) => document.getElementById(id);
+const ns = "http://www.w3.org/2000/svg";
+const mk = (t, a) => { const e = document.createElementNS(ns, t); for (const k in a) e.setAttribute(k, a[k]); return e; };
+const center = (n) => [N[n].x + N[n].w/2, N[n].y + H/2];
+
+function edgePath(a, b) {
+  const A = N[a], B = N[b], ay = A.y + H/2, by = B.y + H/2;
+  if (a==="execute" && B.tool) return `M${A.x+A.w},${ay} C${A.x+A.w+55},${ay} ${B.x-55},${by} ${B.x},${by}`;
+  if (a==="plan" && b==="execute") return `M${A.x+A.w/2},${A.y+H} C${A.x+A.w/2},${A.y+H+60} ${B.x+B.w/2-25},${B.y-60} ${B.x+B.w/2-25},${B.y}`;
+  if (a==="execute" && b==="summarize") return `M${A.x+A.w/2+25},${A.y} C${A.x+A.w/2+25},${A.y-90} ${B.x+30},${B.y+H+30} ${B.x+30},${B.y+H}`;
+  if (a==="execute" && b==="approval") return `M${A.x},${ay-8} L${B.x+B.w},${by-8}`;
+  if (a==="approval" && b==="execute") return `M${A.x+A.w/2},${A.y+H} C${A.x+A.w/2},${A.y+H+45} ${B.x+B.w/2},${B.y+H+45} ${B.x+B.w/2},${B.y+H}`;
+  return `M${A.x+A.w},${ay} L${B.x},${by}`;  // same-row horizontal
+}
+
+function draw() {
+  $("edges").innerHTML = ""; $("nodes").innerHTML = "";
+  E.forEach(([a,b]) => $("edges").appendChild(mk("path", {d: edgePath(a,b), class:"edge", id:`e-${a}-${b}`, "marker-end":"url(#arr)"})));
+  const t = mk("text", {x: 520, y: 92, class:"label", "text-anchor":"middle"}); t.textContent = "tools"; $("edges").appendChild(t);
+  const lock = mk("text", {x: 520, y: 362, class:"label", "text-anchor":"middle"}); lock.textContent = "* needs approval"; $("edges").appendChild(lock);
+  for (const [k, n] of Object.entries(N)) {
+    const g = mk("g", {class: "node" + (n.tool ? " tool" : ""), id: `n-${k}`});
+    g.appendChild(mk("rect", {x:n.x, y:n.y, width:n.w, height:H, rx: n.tool ? 18 : 8}));
+    const tx = mk("text", {x: n.x + n.w/2, y: n.y + H/2 + 4, "text-anchor":"middle"});
+    tx.textContent = n.label + (sens[k] ? " *" : ""); g.appendChild(tx);
+    $("nodes").appendChild(g);
+  }
+}
+
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+function setNode(id, state) { const el = $(`n-${id}`); if (!el) return; el.classList.remove("active","done","wait","denied"); if (state) el.classList.add(state); }
+function addClass(id, c) { const el = $(`n-${id}`); el && el.classList.add(c); }
+async function flash(a, b) { const e = $(`e-${a}-${b}`); if (!e) return; e.classList.add("hot"); await sleep(350); e.classList.remove("hot"); }
+function log(cls, title, detail) {
+  const d = document.createElement("div"); d.className = "ev " + cls;
+  d.innerHTML = `<b></b><small></small>`; d.querySelector("b").textContent = title; d.querySelector("small").textContent = detail || "";
+  $("log").appendChild(d); $("log").scrollTop = 1e9;
+}
+
+let thread = null, last = "start";
+
+async function play(events) {
+  for (const ev of events) {
+    if (ev.node === "plan") {
+      await flash("start","plan"); setNode("plan","active"); await sleep(450);
+      ev.plan.forEach(t => addClass(t, "planned"));
+      log("plan", "plan", ev.plan.length ? "steps: " + ev.plan.join(" → ") : "no tools needed");
+      setNode("plan","done"); last = "plan";
+    } else if (ev.node === "approval") {
+      if (last !== "approval") { await flash(last === "plan" ? "plan" : "execute", "execute"); setNode("execute","active"); await sleep(300); }
+      await flash("execute","approval"); setNode("approval","wait"); setNode(ev.tool,"wait");
+      log("approval", `paused: ${ev.tool} needs approval`, JSON.stringify(ev.args, null, 1));
+      $("aq").textContent = `Allow ${ev.tool}?`; $("aargs").textContent = JSON.stringify(ev.args, null, 2);
+      $("approve").style.display = "block"; last = "approval";
+    } else if (ev.node === "execute") {
+      if (last === "approval") { await flash("approval","execute"); setNode("approval","done"); }
+      else { await flash(last === "plan" ? "plan" : "execute", "execute"); }
+      setNode("execute","active"); await sleep(250);
+      await flash("execute", ev.tool); setNode(ev.tool,"active"); await sleep(450);
+      const denied = ev.output.startsWith("skipped");
+      setNode(ev.tool, denied ? "denied" : "done"); setNode("execute","done");
+      log(denied ? "denied" : "execute", `execute → ${ev.tool}`, ev.output); last = "execute";
+    } else if (ev.node === "summarize") {
+      await flash(last === "plan" ? "plan" : "execute", "summarize"); setNode("summarize","active"); await sleep(450);
+      setNode("summarize","done"); await flash("summarize","end"); setNode("end","done");
+      log("summarize", "summarize", ""); $("sumtext").textContent = ev.summary; $("summary").style.display = "block";
+    }
+  }
+}
+
+async function call(url, body) {
+  const r = await fetch(url, {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body)});
+  const d = await r.json(); thread = d.thread_id; await play(d.events);
+}
+
+$("f").onsubmit = async (e) => {
+  e.preventDefault(); const task = $("task").value.trim(); if (!task) return;
+  draw(); $("log").innerHTML = ""; $("summary").style.display = "none"; $("approve").style.display = "none"; last = "start";
+  setNode("start","done"); log("", "START", task);
+  await call("/api/run", {task});
+};
+const decide = async (d) => { $("approve").style.display = "none"; log(d === "yes" ? "execute" : "denied", d === "yes" ? "you approved" : "you denied", ""); await call("/api/resume", {thread_id: thread, decision: d}); };
+$("yes").onclick = () => decide("yes"); $("no").onclick = () => decide("no");
+document.querySelectorAll("[data-t]").forEach(b => b.onclick = () => { $("task").value = b.dataset.t; $("f").requestSubmit(); });
+draw();
+</script>
+</body>
+</html>

@@ -4,7 +4,9 @@ A small agent built with LangGraph that plans a task, calls tools step by step, 
 
 I built this to learn how LangGraph handles state, checkpointing, and human-in-the-loop interrupts.
 
-**Stack:** Python, LangGraph, OpenAI API (optional), Docker, pytest, GitHub Actions
+![demo](docs/demo.gif)
+
+**Stack:** Python, LangGraph, Flask, JavaScript (SVG), OpenAI API (optional), Docker, pytest, GitHub Actions
 
 Note: the email and todo tools are mocked. They only write to local files.
 
@@ -25,7 +27,30 @@ flowchart LR
     R -->|no| Z[summarize] --> F([END])
 ```
 
-## Example
+## Web UI: watch the agent coordinate
+
+```bash
+python -m agent.web      # http://localhost:8000
+```
+
+The page draws the graph and highlights each node as LangGraph streams it (`stream_mode="updates"`):
+
+- **Blue:** node running
+- **Green:** done
+- **Orange:** paused at the approval gate, with Approve and Deny buttons
+- **Red:** step denied
+- **Dashed outline:** tool is part of the current plan
+
+An event timeline on the right shows each step's input and output.
+
+![approval](docs/approval.png)
+
+| Method | Endpoint | Body | Returns |
+|---|---|---|---|
+| POST | `/api/run` | `{"task": "..."}` | `thread_id`, ordered node events, pending approval |
+| POST | `/api/resume` | `{"thread_id": "...", "decision": "yes" or "no"}` | remaining events and summary |
+
+## CLI example
 
 ```
 $ python -m agent.cli "Find my note about demo day and email alex@example.com about demo day"
@@ -86,13 +111,12 @@ docker run -it task-agent "what is 412 - 350"
 pytest -q
 ```
 
-Tests cover calculator safety, plan structure, a run with no interrupt, the approve path, and the deny path.
+Tests cover calculator safety, plan structure, a run with no interrupt, the approve and deny paths, and the web API event stream.
 
 ## Possible improvements
 
 - Use LLM tool calling (`bind_tools`) instead of JSON planning
 - Persist checkpoints in SQLite or Postgres
-- Web UI with approve and deny buttons
 - Retry failed steps
 
 ## Author
